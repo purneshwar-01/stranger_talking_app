@@ -26,15 +26,10 @@ import {
   Users,
   PhoneOff,
 } from 'lucide-react';
-import {
-  joinQueue,
-  leaveQueue,
-  tryMatch,
-  listenForMatch,
-  listenToWaitingQueue,
-  ensureCallRoom,
-} from '../lib/matchmaking';
-import { getExclusionSet, checkIsBanned } from '../lib/moderation';
+import { useMatchmaker } from '../hooks/useMatchmaker';
+import { useHeartbeat } from '../hooks/useHeartbeat';
+import { ensureCallRoom, leaveQueue } from '../lib/matchmaking';
+import { checkIsBanned } from '../lib/moderation';
 import {
   listenToFriends,
   listenToPendingRequests,
@@ -193,8 +188,6 @@ export default function Dashboard() {
   const [matchMode, setMatchMode]       = useState(profile?.preferredMode || 'professional');
   const [loungeMode, setLoungeMode]     = useState('focus'); // 'focus' | 'casual'
   const [filterGender, setFilterGender] = useState('Any');
-  const [searching, setSearching]       = useState(false);
-  const [searchStatusText, setSearchStatusText] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [friends, setFriends]           = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
@@ -203,19 +196,30 @@ export default function Dashboard() {
   const [isBanned, setIsBanned]           = useState(false);
   const [dmFriend, setDmFriend]           = useState(null);
   const [incomingCall, setIncomingCall]   = useState(null);
-  const [declineToast, setDeclineToast]   = useState(null); // { calleeName }
-  const [callingFriend, setCallingFriend] = useState(null); // friend being called — show overlay
-  // unreadCounts: { [friendUid]: number }
+  const [declineToast, setDeclineToast]   = useState(null);
+  const [callingFriend, setCallingFriend] = useState(null);
   const [unreadCounts, setUnreadCounts]   = useState({});
 
-  const pollRef              = useRef(null);
-  const unsubRef             = useRef(null);
-  const queueUnsubRef        = useRef(null);
-  const declineUnsubRef      = useRef(null);
-  const navigatedRef         = useRef(false);
-  const searchAttemptsRef    = useRef(0);
-  // Track which friend's DM is currently open (to suppress their badge)
-  const openDmUidRef         = useRef(null);
+  const declineUnsubRef = useRef(null);
+  const navigatedRef    = useRef(false);
+  const openDmUidRef    = useRef(null);
+
+  // ── Matchmaking hook ────────────────────────────────────────────────────
+  const { searching, statusText: searchStatusText, startSearching, stopSearching } = useMatchmaker({
+    uid:          user?.uid,
+    profile,
+    matchMode,
+    filterGender,
+    isBanned,
+    onRoomReady: (roomId) => {
+      navigatedRef.current = true;
+      navigate(`/call/${roomId}?mode=${matchMode}`);
+    },
+    onError: setErrorMessage,
+  });
+
+  // ── Heartbeat: clean queue on tab-close / visibility hidden ─────────────
+  useHeartbeat(user?.uid, searching);
 
   const activeModeObj = MODES.find((m) => m.id === matchMode) || MODES[0];
 
@@ -278,78 +282,6 @@ export default function Dashboard() {
     const unsub = listenForIncomingCall(user.uid, setIncomingCall);
     return unsub;
   }, [user?.uid]);
-
-  // ── Cleanup on unmount ──────────────────────────────────────────────────
-  useEffect(() => {
-    return () => { stopSearching(true); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Matchmaking helpers ─────────────────────────────────────────────────
-  const stopSearching = (removeFromQueue = true) => {
-    setSearching(false);
-    setSearchStatusText('');
-    searchAttemptsRef.current = 0;
-    if (pollRef.current)       clearInterval(pollRef.current);
-    if (unsubRef.current)      unsubRef.current();
-    if (queueUnsubRef.current) queueUnsubRef.current();
-    if (declineUnsubRef.current) { declineUnsubRef.current(); declineUnsubRef.current = null; }
-    pollRef.current = null; unsubRef.current = null; queueUnsubRef.current = null;
-    if (removeFromQueue && user) leaveQueue(user.uid).catch(() => {});
-  };
-
-  const goToRoom = (roomId) => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-    stopSearching(false);
-    navigate(`/call/${roomId}?mode=${matchMode}`);
-  };
-
-  const startMatch = async () => {
-    if (!user || !profile || searching) return;
-    if (isBanned || profile.strikeCount >= 3) {
-      setErrorMessage('Your account has been suspended due to 3 community policy strikes.');
-      return;
-    }
-    setErrorMessage('');
-    navigatedRef.current = false;
-    searchAttemptsRef.current = 0;
-    setSearching(true);
-    setSearchStatusText('Joining matchmaking queue...');
-    try {
-      const excluded = await getExclusionSet(user.uid);
-      await joinQueue({ uid: user.uid, username: profile.username, gender: profile.gender, genderFilter: filterGender, mode: matchMode, occupation: profile.occupation || '', age: profile.age });
-      unsubRef.current = listenForMatch(user.uid, (roomId) => goToRoom(roomId), (err) => {
-        if (err?.code === 'permission-denied' || err?.code === 'unauthenticated') {
-          setErrorMessage('Matchmaking permission error — ensure Firestore rules are deployed.');
-          stopSearching(true);
-        }
-      });
-      queueUnsubRef.current = listenToWaitingQueue(() => {});
-      const attempt = async () => {
-        searchAttemptsRef.current += 1;
-        const attempts = searchAttemptsRef.current;
-        if (attempts <= 4)      setSearchStatusText(`Looking for a ${activeModeObj.label} partner...`);
-        else if (attempts <= 8) setSearchStatusText('Expanding search to nearby modes...');
-        else                    setSearchStatusText('Opening to all available strangers...');
-        try {
-          const roomId = await tryMatch(user.uid, { gender: profile.gender, genderFilter: filterGender, mode: matchMode, excluded, searchAttemptCount: attempts });
-          if (roomId) goToRoom(roomId);
-        } catch (err) {
-          if (err?.code === 'permission-denied' || err?.code === 'unauthenticated') {
-            setErrorMessage('Matchmaking cannot create a room. Deploy the Firestore rules and try again.');
-            stopSearching(true);
-          }
-        }
-      };
-      await attempt();
-      pollRef.current = setInterval(attempt, POLL_MS);
-    } catch (err) {
-      console.error('Start match error:', err);
-      setErrorMessage('Failed to start matchmaking. Please try again.');
-      stopSearching(true);
-    }
-  };
 
   const startPracticeCall = async () => {
     const roomId = `practice_${user.uid}_${Date.now()}`;
@@ -627,7 +559,7 @@ export default function Dashboard() {
             )}
 
             {!searching ? (
-              <button onClick={startMatch} disabled={isBanned}
+              <button onClick={startSearching} disabled={isBanned}
                 className="group relative inline-flex items-center justify-center px-10 py-4 font-bold text-white transition-all duration-150 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-2xl shadow-md hover:shadow-lg active:scale-95 disabled:opacity-50">
                 <Video className="mr-2.5 group-hover:scale-110 transition" size={21} />
                 <span className="text-base tracking-tight">Find Partner for {activeModeObj.label}</span>

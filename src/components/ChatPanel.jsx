@@ -9,7 +9,8 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Send, X, Lock } from 'lucide-react';
+import { Send, X, Lock, ShieldAlert } from 'lucide-react';
+import { filterText, isPurelyEmpty } from '../lib/textFilter';
 
 export default function ChatPanel({ roomId, uid, username, onClose }) {
   const [messages, setMessages] = useState([]);
@@ -46,21 +47,33 @@ export default function ChatPanel({ roomId, uid, username, onClose }) {
 
   const send = async (e) => {
     e.preventDefault();
-    const body = text.trim();
-    if (!body) return;
+    const raw = text.trim();
+    if (!raw) return;
+
+    // Apply moderation filter before persisting.
+    const { text: filtered, wasFiltered } = filterText(raw);
+
+    // If the entire message was filtered out, silently reject it.
+    if (isPurelyEmpty(filtered)) {
+      setSendError('Message blocked by content filter.');
+      return;
+    }
+
     setText('');
     setSendError('');
+    if (wasFiltered) setSendError('Part of your message was filtered.');
+
     try {
       await addDoc(collection(db, 'calls', roomId, 'messages'), {
         uid,
         username,
-        text: body.slice(0, 500),
+        text: filtered.slice(0, 500),
         createdAt: serverTimestamp(),
       });
     } catch (err) {
       console.error('[ChatPanel] send error:', err);
       setSendError('Message failed. Please try again.');
-      setText(body); // restore so user can retry
+      setText(raw); // restore so user can retry
     }
   };
 
@@ -84,19 +97,25 @@ export default function ChatPanel({ roomId, uid, username, onClose }) {
             Say hi — messages here are private to your call.
           </p>
         )}
-        {messages.map((m) => (
-          <div key={m.id} className={m.uid === uid ? 'text-right' : 'text-left'}>
-            <span
-              className={`inline-block px-3 py-2 rounded-2xl max-w-[85%] text-xs font-medium ${
-                m.uid === uid
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-slate-100 border border-slate-200/80 text-slate-900'
-              }`}
-            >
-              {m.text}
-            </span>
-          </div>
-        ))}
+        {messages.map((m) => {
+          const { text: displayText, wasFiltered } = filterText(m.text);
+          return (
+            <div key={m.id} className={m.uid === uid ? 'text-right' : 'text-left'}>
+              <span
+                className={`inline-block px-3 py-2 rounded-2xl max-w-[85%] text-xs font-medium ${
+                  m.uid === uid
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-slate-100 border border-slate-200/80 text-slate-900'
+                }`}
+              >
+                {displayText}
+                {wasFiltered && (
+                  <ShieldAlert size={10} className="inline ml-1 opacity-50" title="Content filtered" />
+                )}
+              </span>
+            </div>
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 

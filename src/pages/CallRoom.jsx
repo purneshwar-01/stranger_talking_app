@@ -18,6 +18,11 @@ import {
   Lock,
   Monitor,
   FileText,
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Wifi,
 } from 'lucide-react';
 import { leaveQueue, getCallParticipants, markCallEnded, listenForCallEnd } from '../lib/matchmaking';
 import { blockUser, reportUser } from '../lib/moderation';
@@ -26,6 +31,7 @@ import ChatPanel from '../components/ChatPanel';
 import ReportModal from '../components/ReportModal';
 import FeedbackModal from '../components/FeedbackModal';
 import NetworkingModal from '../components/NetworkingModal';
+import EmojiReactions from '../components/EmojiReactions';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const DEV_APP_ID = Number(import.meta.env.VITE_ZEGO_DEV_APP_ID);
@@ -70,6 +76,12 @@ export default function CallRoom() {
   const [notes, setNotes]                 = useState('');
   // Networking modal
   const [networkingOpen, setNetworkingOpen] = useState(false);
+  // Mute controls
+  const [camMuted,  setCamMuted]  = useState(false);
+  const [micMuted,  setMicMuted]  = useState(false);
+  // Ping badge (ms)
+  const [ping, setPing] = useState(null);
+  const pingIntervalRef = useRef(null);
 
   const stopStreamTracks = useCallback((stream) => {
     stream?.getTracks?.().forEach((track) => {
@@ -338,6 +350,21 @@ export default function CallRoom() {
     };
   }, [roomId, user, profile, mode, isPrivateRoom, cleanupCallResources, finishRoomExit]);
 
+  // ── Ping measurement ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const measure = async () => {
+      const t0 = performance.now();
+      try {
+        await fetch('https://firestore.googleapis.com/', { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
+      } catch { /* best effort */ }
+      const ms = Math.round(performance.now() - t0);
+      setPing(ms);
+    };
+    measure();
+    pingIntervalRef.current = setInterval(measure, 8000);
+    return () => clearInterval(pingIntervalRef.current);
+  }, []);
+
   // Live mic captioning
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -471,6 +498,22 @@ export default function CallRoom() {
     }
   };
 
+  // Toggle camera track on/off via MediaStreamTrack.enabled
+  const toggleCam = useCallback(() => {
+    const stream = zpRef.current?.localStream;
+    if (!stream) return;
+    stream.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; });
+    setCamMuted((v) => !v);
+  }, []);
+
+  // Toggle mic track on/off
+  const toggleMic = useCallback(() => {
+    const stream = zpRef.current?.localStream;
+    if (!stream) return;
+    stream.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; });
+    setMicMuted((v) => !v);
+  }, []);
+
   return (
     <div className="w-screen h-screen bg-slate-900 relative overflow-hidden flex items-center justify-center font-sans text-slate-900">
       <div className="absolute inset-0 w-full h-full" ref={containerRef} />
@@ -542,6 +585,19 @@ export default function CallRoom() {
               <Clock size={14} /> {formatTimer(timeLeft)}
             </div>
           )}
+
+          {/* Ping / Latency badge */}
+          {ping !== null && (
+            <div className={`ping-badge flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md border backdrop-blur-md ${
+              ping < 100
+                ? 'bg-emerald-500/90 text-white border-emerald-400'
+                : ping < 250
+                ? 'bg-amber-500/90 text-white border-amber-400'
+                : 'bg-red-500/90 text-white border-red-400'
+            }`}>
+              <Wifi size={10} /> {ping}ms
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2.5 pointer-events-auto">
@@ -591,6 +647,32 @@ export default function CallRoom() {
             title="In-App Chat"
           >
             <MessageCircle size={18} />
+          </button>
+
+          {/* Mic mute toggle */}
+          <button
+            onClick={toggleMic}
+            className={`p-2.5 rounded-full border shadow-md transition ${
+              micMuted
+                ? 'bg-red-500 border-red-400 text-white'
+                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
+            }`}
+            title={micMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+          >
+            {micMuted ? <MicOff size={18} /> : <Mic size={18} />}
+          </button>
+
+          {/* Camera mute toggle */}
+          <button
+            onClick={toggleCam}
+            className={`p-2.5 rounded-full border shadow-md transition ${
+              camMuted
+                ? 'bg-red-500 border-red-400 text-white'
+                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
+            }`}
+            title={camMuted ? 'Turn Camera On' : 'Turn Camera Off'}
+          >
+            {camMuted ? <VideoOff size={18} /> : <Video size={18} />}
           </button>
 
           {/* Screen Share */}
@@ -680,8 +762,12 @@ export default function CallRoom() {
         </div>
       )}
 
-      {/* AI Icebreaker button */}
-      <div className="absolute left-5 top-1/2 -translate-y-1/2 flex flex-col gap-4 pointer-events-auto z-10">
+      {/* Emoji Reactions + AI Icebreaker — left side panel */}
+      <div className="absolute left-5 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-auto z-10">
+        {/* Emoji reactions toolbar */}
+        <EmojiReactions />
+
+        {/* AI Icebreaker button */}
         <button
           onClick={generateIcebreaker}
           className="bg-white/90 border border-slate-200 p-3.5 rounded-2xl flex flex-col items-center gap-1.5 hover:border-indigo-500 transition group text-slate-700 hover:text-indigo-600 backdrop-blur-md shadow-xl"
