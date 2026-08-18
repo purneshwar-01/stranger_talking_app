@@ -1,8 +1,105 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
+
+    // ─── Users ─────────────────────────────────────────────────────────────
+    // Any authenticated user can read any profile (needed for matchmaking / friend cards).
+    // Only the owner can write their own document.
+    match /users/{userId} {
+      allow read:  if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ─── Match Queue ────────────────────────────────────────────────────────
+    // Users can list/read the queue so tryMatch() can find candidates.
+    // Users can create/delete their own queue doc.
+    // Authenticated users can update ANOTHER user's queue doc ONLY to flip
+    //   status → 'matched' and set matchedWith (the atomic transaction pattern).
+    match /matchQueue/{userId} {
+      allow read, list: if request.auth != null;
+      allow create, delete: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && (
+        request.auth.uid == userId ||
+        (
+          request.resource.data.status == 'matched' &&
+          request.resource.data.matchedWith == request.auth.uid
+        )
+      );
+    }
+
+    // ─── Calls ─────────────────────────────────────────────────────────────
+    // Only participants of a call can read/write the call document.
+    // Authenticated users can create new call docs (needed for the transaction).
+    match /calls/{roomId} {
+      allow create: if request.auth != null;
+      allow read, update: if request.auth != null &&
+        request.auth.uid in resource.data.participants;
+    }
+
+    // ─── Direct Messages ───────────────────────────────────────────────────
+    match /dms/{roomId} {
+      allow read, write: if request.auth != null &&
+        request.auth.uid in resource.data.participants;
+
+      // Message sub-collection — same participant gate as parent.
+      match /messages/{msgId} {
+        allow read: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/dms/$(roomId)).data.participants;
+        allow create: if request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/dms/$(roomId)).data.participants &&
+          request.resource.data.senderUid == request.auth.uid;
+      }
+    }
+
+    // ─── Friend Requests ───────────────────────────────────────────────────
+    match /friendRequests/{requestId} {
+      allow read: if request.auth != null && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid   == request.auth.uid
+      );
+      allow create: if request.auth != null &&
+        request.resource.data.fromUid == request.auth.uid;
+      allow delete: if request.auth != null && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid   == request.auth.uid
+      );
+    }
+
+    // ─── Friends ───────────────────────────────────────────────────────────
+    match /friends/{friendshipId} {
+      allow read, delete: if request.auth != null &&
+        request.auth.uid in resource.data.users;
+      allow create: if request.auth != null &&
+        request.auth.uid in request.resource.data.users;
+    }
+
+    // ─── Call Invites (direct call signalling) ─────────────────────────────
+    match /callInvites/{receiverUid} {
+      allow read:  if request.auth != null && request.auth.uid == receiverUid;
+      allow write: if request.auth != null;
+    }
+
+    // ─── Feedback / Ratings ────────────────────────────────────────────────
+    match /feedback/{docId} {
+      allow create: if request.auth != null;
+      allow read:   if request.auth != null &&
+        resource.data.fromUid == request.auth.uid;
+    }
+
+    // ─── Reports / Moderation ──────────────────────────────────────────────
+    match /reports/{docId} {
+      allow create: if request.auth != null;
+      allow read:   if false; // admin-only via Firebase Admin SDK
+    }
+
+    // ─── Network Exchange (post-call contact sharing) ──────────────────────
+    match /networkExchanges/{roomId} {
       allow read, write: if request.auth != null;
+
+      match /intents/{uid} {
+        allow read:   if request.auth != null;
+        allow create, update: if request.auth != null && request.auth.uid == uid;
+      }
     }
   }
 }

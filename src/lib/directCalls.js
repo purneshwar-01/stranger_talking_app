@@ -24,7 +24,6 @@ export async function sendCallInvite({ callerUid, callerName, receiverUid }) {
     status: 'pending',
     createdAt: serverTimestamp(),
   });
-  console.log(`[DirectCall] Invite sent to uid=${receiverUid}, roomId=${roomId}`);
   return roomId;
 }
 
