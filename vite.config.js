@@ -1,8 +1,12 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+
+  // Explicit root-relative base path — ensures /assets/* URLs resolve
+  // correctly on Firebase Hosting and any CDN.
+  base: '/',
 
   build: {
     // Raise warning threshold — Zego SDK is inherently ~5.2 MB (third-party, cannot split)
