@@ -57,7 +57,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50 text-slate-900 font-sans py-8">
       <div className="bg-white border border-slate-200/90 p-8 md:p-10 max-w-md w-full rounded-3xl shadow-xl space-y-6 relative overflow-hidden">
         {/* Decorative blobs */}
         <div className="absolute -top-24 -right-24 w-48 h-48 bg-indigo-50 blur-2xl rounded-full pointer-events-none" />
@@ -205,6 +205,27 @@ export default function Landing() {
           </div>
         )}
       </div>
+
+      {/* SEO Section for Search Engine Indexing */}
+      <footer className="mt-8 max-w-2xl text-center space-y-4 text-slate-600 px-4">
+        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/80 rounded-2xl p-6 shadow-sm text-left space-y-3">
+          <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+            Why Use Stranger Talking App?
+          </h2>
+          <p className="text-xs leading-relaxed text-slate-600">
+            Stranger Talking App is the premier global platform designed for safe, purpose-driven video discovery. Connect instantly with like-minded individuals worldwide for professional networking, language learning, gaming, or casual video chat.
+          </p>
+          <h3 className="text-sm font-bold text-slate-800 pt-1">
+            Best Free Omegle Alternative for Video Calls
+          </h3>
+          <p className="text-xs leading-relaxed text-slate-600">
+            Looking for a reliable Omegle alternative? Stranger Talking App offers verified profiles, interest-based matching, real-time AI conversation co-pilots, and end-to-end moderated video rooms with zero registration fees.
+          </p>
+        </section>
+        <p className="text-[11px] text-slate-400 font-medium">
+          © {new Date().getFullYear()} Stranger Talking App. All rights reserved.
+        </p>
+      </footer>
     </div>
   );
 }

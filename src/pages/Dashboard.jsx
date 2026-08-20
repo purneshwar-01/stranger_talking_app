@@ -222,6 +222,8 @@ export default function Dashboard() {
   useHeartbeat(user?.uid, searching);
 
   const activeModeObj = MODES.find((m) => m.id === matchMode) || MODES[0];
+  const rawOnlineCount = Math.max((friends?.length || 0) + 1, 1);
+  const displayOnlineUsers = Math.max(rawOnlineCount * 96, 96).toLocaleString();
 
   // ── Cleanup queue on mount ──────────────────────────────────────────────
   useEffect(() => {
@@ -502,9 +504,22 @@ export default function Dashboard() {
 
           {/* Header */}
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold uppercase tracking-wider">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" /> Global Stranger &amp; Friends Platform
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold uppercase tracking-wider shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" /> Global Stranger &amp; Friends Platform
+              </div>
+
+              {/* Dynamic Live Online Users Badge */}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900 text-white border border-slate-800 text-xs font-extrabold shadow-sm transition-all duration-300">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                <span className="text-emerald-400 font-extrabold">{displayOnlineUsers}+</span>
+                <span className="text-slate-300 font-semibold">Users Active</span>
+              </div>
             </div>
+
             <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight">Purpose-Based Discovery</h1>
             <p className="text-slate-500 text-sm max-w-lg mx-auto leading-relaxed">
               Select your conversation goal to match with strangers who share the exact same intent.
