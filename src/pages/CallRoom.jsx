@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc } from 'firebase/firestore';
@@ -23,6 +24,8 @@ import {
   Video,
   VideoOff,
   Wifi,
+  Lightbulb,
+  Gamepad,
 } from 'lucide-react';
 import { leaveQueue, getCallParticipants, markCallEnded, listenForCallEnd } from '../lib/matchmaking';
 import { blockUser, reportUser } from '../lib/moderation';
@@ -32,6 +35,8 @@ import ReportModal from '../components/ReportModal';
 import FeedbackModal from '../components/FeedbackModal';
 import NetworkingModal from '../components/NetworkingModal';
 import EmojiReactions from '../components/EmojiReactions';
+import AIWingman from '../components/AIWingman';
+import PrivacyAvatar from '../components/PrivacyAvatar';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL;
 const DEV_APP_ID = Number(import.meta.env.VITE_ZEGO_DEV_APP_ID);
@@ -82,6 +87,16 @@ export default function CallRoom() {
   // Ping badge (ms)
   const [ping, setPing] = useState(null);
   const pingIntervalRef = useRef(null);
+
+  // AI Wingman & Privacy Avatar states
+  const [localCamOn, setLocalCamOn] = useState(true);
+  const [remoteCamOn, setRemoteCamOn] = useState(true);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [avatarStyle, setAvatarStyle] = useState('neon-spirit');
+  const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false);
+  const [pipContainer, setPipContainer] = useState(null);
+  const onAskWingmanRef = useRef(null);
 
   const stopStreamTracks = useCallback((stream) => {
     stream?.getTracks?.().forEach((track) => {
@@ -395,6 +410,79 @@ export default function CallRoom() {
     return stopRecognition;
   }, [stopRecognition]);
 
+  // Zego Stream Monitor & Camera Mute State Detector
+  useEffect(() => {
+    let active = true;
+    const checkState = () => {
+      if (!active || !containerRef.current) return;
+
+      const videos = containerRef.current.querySelectorAll('video');
+      const zpLocalStream = zpRef.current?.localStream;
+
+      let localActive = false;
+      let remoteActive = false;
+      let locStream = null;
+      let remStream = null;
+
+      videos.forEach((video) => {
+        const stream = video.srcObject;
+        if (!stream) return;
+        const tracks = stream.getVideoTracks();
+        const hasVideo = tracks.some((t) => t.enabled && t.readyState === 'live');
+
+        if (zpLocalStream && stream === zpLocalStream) {
+          locStream = stream;
+          if (hasVideo && !camMuted) {
+            localActive = true;
+          }
+        } else {
+          remStream = stream;
+          if (hasVideo) {
+            remoteActive = true;
+          }
+        }
+      });
+
+      // Update camera states
+      setLocalCamOn(localActive);
+      setRemoteCamOn(remoteActive);
+
+      // Save references to streams for visualizer
+      if (locStream) setLocalStream(locStream);
+      if (remStream) setRemoteStream(remStream);
+    };
+
+    const interval = setInterval(checkState, 1000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [camMuted]);
+
+  // Zego local PIP box detector for Portal rendering
+  useEffect(() => {
+    const findPip = () => {
+      if (!containerRef.current) return;
+      // Search for absolute/fixed positioned layout wrappers that fit Zego PIP dimensions
+      const divs = containerRef.current.querySelectorAll('div');
+      let found = null;
+      divs.forEach((div) => {
+        const rect = div.getBoundingClientRect();
+        const style = window.getComputedStyle(div);
+        if (
+          (style.position === 'absolute' || style.position === 'fixed') &&
+          rect.width > 50 && rect.width < 320 &&
+          rect.height > 50 && rect.height < 240
+        ) {
+          found = div;
+        }
+      });
+      setPipContainer(found);
+    };
+    const interval = setInterval(findPip, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleAddFriend = async () => {
     if (!otherUid || friendStatus !== 'none' || sendingRequest) return;
     setSendingRequest(true);
@@ -516,7 +604,43 @@ export default function CallRoom() {
 
   return (
     <div className="w-screen h-screen bg-slate-900 relative overflow-hidden flex items-center justify-center font-sans text-slate-900">
-      <div className="absolute inset-0 w-full h-full" ref={containerRef} />
+      
+      {/* Remote Video Canvas Sizing / Fallback Avatar */}
+      <div className="absolute inset-0 w-full h-full zego-video-container" ref={containerRef} />
+      
+      {!remoteCamOn && (
+        <div className="absolute inset-0 w-full h-full z-0 pointer-events-none">
+          <PrivacyAvatar
+            user={otherProfile || { username: 'Stranger' }}
+            stream={remoteStream}
+            styleType={avatarStyle}
+          />
+        </div>
+      )}
+
+      {/* Local Video Fallback Avatar (Portal render to Zego PIP container if found, else custom PIP box) */}
+      {!localCamOn && (
+        pipContainer ? (
+          createPortal(
+            <PrivacyAvatar
+              user={profile}
+              stream={localStream}
+              styleType={avatarStyle}
+              isMini={true}
+            />,
+            pipContainer
+          )
+        ) : (
+          <div className="absolute bottom-24 right-5 w-28 h-36 rounded-xl overflow-hidden border border-white/10 shadow-2xl z-10">
+            <PrivacyAvatar
+              user={profile}
+              stream={localStream}
+              styleType={avatarStyle}
+              isMini={true}
+            />
+          </div>
+        )
+      )}
 
       {/* ── Pre-Call Privacy Shield ─────────────────────────────────────── */}
       {privacyShield && (
@@ -569,189 +693,39 @@ export default function CallRoom() {
         </div>
       )}
 
-      {/* Top Controls Header */}
-      <div className="absolute top-5 left-5 right-5 flex justify-between items-center pointer-events-none z-10">
-        <div className="flex items-center gap-3 pointer-events-auto">
-          <div className="bg-white/90 border border-slate-200 px-4 py-2 rounded-full backdrop-blur-md shadow-md flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-              {isPrivateRoom ? <Lock size={13} className="text-indigo-600" /> : null}
-              {isPrivateRoom ? 'PRIVATE CODE ROOM' : `${mode.toUpperCase()} MODE`}
-            </span>
-          </div>
-
-          {timeLeft !== null && (
-            <div className="bg-amber-500 text-white font-black px-3.5 py-1.5 rounded-full shadow-md text-xs flex items-center gap-1.5">
-              <Clock size={14} /> {formatTimer(timeLeft)}
-            </div>
-          )}
-
-          {/* Ping / Latency badge */}
-          {ping !== null && (
-            <div className={`ping-badge flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold shadow-md border backdrop-blur-md ${
-              ping < 100
-                ? 'bg-emerald-500/90 text-white border-emerald-400'
-                : ping < 250
-                ? 'bg-amber-500/90 text-white border-amber-400'
-                : 'bg-red-500/90 text-white border-red-400'
-            }`}>
-              <Wifi size={10} /> {ping}ms
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2.5 pointer-events-auto">
-          {/* Add Friend Button */}
-          {otherUid && (
-            <button
-              onClick={handleAddFriend}
-              disabled={friendStatus !== 'none' || sendingRequest}
-              className={`px-4 py-2 rounded-full font-bold text-xs flex items-center gap-1.5 border transition shadow-md ${
-                friendStatus === 'friends'
-                  ? 'bg-emerald-500 text-white border-transparent'
-                  : friendStatus === 'pending'
-                  ? 'bg-amber-100 text-amber-800 border-amber-300'
-                  : 'bg-indigo-600 hover:bg-indigo-700 text-white border-transparent'
-              }`}
-            >
-              {friendStatus === 'friends' ? (
-                <>
-                  <Check size={14} /> Friends
-                </>
-              ) : friendStatus === 'pending' ? (
-                <>
-                  <Check size={14} /> Request Sent
-                </>
-              ) : (
-                <>
-                  <UserPlus size={14} /> Add Friend
-                </>
-              )}
-            </button>
-          )}
-
-          {/* SKIP / NEXT BUTTON */}
-          {!isPrivateRoom && (
-            <button
-              onClick={handleSkip}
-              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs px-4 py-2 rounded-full shadow-md flex items-center gap-1.5 transition active:scale-95"
-              title="Skip to next stranger"
-            >
-              <Zap size={14} /> Skip Stranger
-            </button>
-          )}
-
-          <button
-            onClick={() => setChatOpen((v) => !v)}
-            className="bg-white/90 border border-slate-200 p-2.5 rounded-full hover:bg-white text-slate-700 shadow-md transition"
-            title="In-App Chat"
-          >
-            <MessageCircle size={18} />
-          </button>
-
-          {/* Mic mute toggle */}
-          <button
-            onClick={toggleMic}
-            className={`p-2.5 rounded-full border shadow-md transition ${
-              micMuted
-                ? 'bg-red-500 border-red-400 text-white'
-                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
-            }`}
-            title={micMuted ? 'Unmute Microphone' : 'Mute Microphone'}
-          >
-            {micMuted ? <MicOff size={18} /> : <Mic size={18} />}
-          </button>
-
-          {/* Camera mute toggle */}
-          <button
-            onClick={toggleCam}
-            className={`p-2.5 rounded-full border shadow-md transition ${
-              camMuted
-                ? 'bg-red-500 border-red-400 text-white'
-                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
-            }`}
-            title={camMuted ? 'Turn Camera On' : 'Turn Camera Off'}
-          >
-            {camMuted ? <VideoOff size={18} /> : <Video size={18} />}
-          </button>
-
-          {/* Screen Share */}
-          <button
-            onClick={toggleScreenShare}
-            className={`p-2.5 rounded-full border shadow-md transition ${
-              screenSharing
-                ? 'bg-indigo-600 border-indigo-500 text-white'
-                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
-            }`}
-            title={screenSharing ? 'Stop Sharing' : 'Share Screen'}
-          >
-            <Monitor size={18} />
-          </button>
-
-          {/* Quick Notes */}
-          <button
-            onClick={() => setNotesOpen((v) => !v)}
-            className={`p-2.5 rounded-full border shadow-md transition ${
-              notesOpen
-                ? 'bg-emerald-600 border-emerald-500 text-white'
-                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-white'
-            }`}
-            title="Quick Notes / Code Scratchpad"
-          >
-            <FileText size={18} />
-          </button>
-
-          <button
-            onClick={() => setReportOpen(true)}
-            className="bg-white/90 border border-slate-200 p-2.5 rounded-full hover:bg-red-50 text-red-600 shadow-md transition"
-            title="Report & Add Strike"
-          >
-            <Flag size={18} />
-          </button>
-
-          <button
-            onClick={() => leaveCall(isPrivateRoom ? 'dashboard' : 'feedback')}
-            className="bg-white/90 border border-slate-200 p-2.5 rounded-full hover:bg-white text-slate-700 shadow-md transition"
-            title="Leave Call"
-          >
-            <X size={18} />
-          </button>
-        </div>
-      </div>
-
-      {/* Stranger Trust Card Overlay */}
-      {otherProfile && (
-        <div className="absolute top-20 left-5 pointer-events-auto z-10 max-w-xs">
-          <div className="bg-white/95 border border-slate-200/90 p-4 rounded-2xl backdrop-blur-md shadow-xl text-slate-900 space-y-2">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow-sm">
+      {/* ── User Info & AI Wingman Overlay (Top-Left) ───────────────────── */}
+      <div className="absolute top-5 left-5 pointer-events-none z-15 max-w-xs w-full flex flex-col gap-3">
+        {otherProfile && (
+          <div className="bg-black/40 backdrop-blur-md border border-white/10 p-2.5 rounded-2xl shadow-xl text-white space-y-1.5 pointer-events-auto">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow-sm shrink-0">
                 {otherProfile.username?.charAt(0).toUpperCase() || 'S'}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1">
-                  <h4 className="font-bold text-xs truncate">{otherProfile.username}</h4>
-                  <ShieldCheck size={13} className="text-emerald-600 shrink-0" title="Verified Member" />
+                  <h4 className="font-bold text-xs truncate text-white">{otherProfile.username}</h4>
+                  <ShieldCheck size={12} className="text-emerald-400 shrink-0" title="Verified Member" />
                 </div>
-                <p className="text-[10px] text-indigo-600 font-semibold truncate flex items-center gap-1">
-                  <Briefcase size={10} /> {otherProfile.occupation || 'Member'}
+                <p className="text-[9px] text-white/60 truncate flex items-center gap-1">
+                  <Briefcase size={9} /> {otherProfile.occupation || 'Member'}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium pt-0.5">
+            <div className="flex items-center gap-2 text-[9px] text-white/70 pt-0.5 border-t border-white/5">
               <span>{otherProfile.country || 'Global'}</span>
               <span>•</span>
-              <span className="text-emerald-600 font-bold">
-                {otherProfile.trustScore || 100}% Behavior Score
+              <span className="text-emerald-400 font-bold">
+                {otherProfile.trustScore || 100}% Score
               </span>
             </div>
 
             {Array.isArray(otherProfile.interests) && otherProfile.interests.length > 0 && (
-              <div className="flex flex-wrap gap-1 pt-1">
-                {otherProfile.interests.map((t, idx) => (
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                {otherProfile.interests.slice(0, 3).map((t, idx) => (
                   <span
                     key={idx}
-                    className="text-[9px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full border border-slate-200"
+                    className="text-[8px] font-bold bg-white/10 text-white/95 px-1.5 py-0.5 rounded-full border border-white/5"
                   >
                     #{t}
                   </span>
@@ -759,42 +733,261 @@ export default function CallRoom() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Emoji Reactions + AI Icebreaker — left side panel */}
-      <div className="absolute left-5 top-1/2 -translate-y-1/2 flex flex-col gap-3 pointer-events-auto z-10">
-        {/* Emoji reactions toolbar */}
-        <EmojiReactions />
-
-        {/* AI Icebreaker button */}
-        <button
-          onClick={generateIcebreaker}
-          className="bg-white/90 border border-slate-200 p-3.5 rounded-2xl flex flex-col items-center gap-1.5 hover:border-indigo-500 transition group text-slate-700 hover:text-indigo-600 backdrop-blur-md shadow-xl"
-        >
-          <Sparkles size={20} className="group-hover:animate-spin text-indigo-600" />
-          <span className="text-[10px] font-extrabold">AI Icebreaker</span>
-        </button>
+        {/* AI Wingman Panel */}
+        <AIWingman
+          subtitle={subtitle}
+          remoteStream={remoteStream}
+          otherProfile={otherProfile}
+          myProfile={profile}
+          onAskWingmanRef={onAskWingmanRef}
+        />
       </div>
 
+      {/* ── Room Meta & Status Bar (Top-Right) ──────────────────────────── */}
+      <div className="absolute top-5 right-5 flex items-center gap-2 pointer-events-auto z-15">
+        <div className="bg-black/40 border border-white/10 px-3 py-1.5 rounded-full backdrop-blur-md shadow-md flex items-center gap-2 text-white">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+            {isPrivateRoom ? <Lock size={11} className="text-indigo-400" /> : null}
+            {isPrivateRoom ? 'Private Code Room' : `${mode} Mode`}
+          </span>
+        </div>
+
+        {timeLeft !== null && (
+          <div className="bg-amber-500 text-white font-extrabold px-3 py-1.5 rounded-full shadow-md text-xs flex items-center gap-1 shrink-0">
+            <Clock size={12} /> <span>{formatTimer(timeLeft)}</span>
+          </div>
+        )}
+
+        {ping !== null && (
+          <div className={`ping-badge flex items-center gap-1 px-3 py-1.5 rounded-full text-[10px] font-bold shadow-md border backdrop-blur-md shrink-0 ${
+            ping < 100
+              ? 'bg-emerald-500/80 text-white border-emerald-500/20'
+              : ping < 250
+              ? 'bg-amber-500/80 text-white border-amber-500/20'
+              : 'bg-red-500/80 text-white border-red-500/20'
+          }`}>
+            <Wifi size={11} /> {ping}ms
+          </div>
+        )}
+      </div>
+
+      {/* ── Top Center Icebreaker Banner ────────────────────────────────── */}
       {icebreaker && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-white/95 border border-indigo-200 text-slate-800 px-6 py-3 rounded-full z-10 pointer-events-none backdrop-blur-md shadow-xl max-w-md text-center">
-          <p className="text-xs font-bold flex items-center gap-2 justify-center text-indigo-900">
-            <Sparkles size={14} className="text-indigo-600" /> {icebreaker}
-          </p>
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-black/60 border border-white/10 text-white px-5 py-2 rounded-full z-15 pointer-events-none backdrop-blur-md shadow-lg max-w-sm md:max-w-md lg:max-w-lg text-center flex items-center gap-2 justify-center">
+          <Sparkles size={13} className="text-indigo-400 shrink-0" />
+          <span className="text-xs font-semibold tracking-wide truncate">{icebreaker}</span>
         </div>
       )}
 
+      {/* ── Subtitle Banner (Bottom subtitle display) ───────────────────── */}
       {subtitle && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md pointer-events-none z-10">
-          <div className="bg-slate-900/90 backdrop-blur-md text-white text-center px-6 py-3 rounded-2xl border border-slate-700 shadow-2xl">
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-md pointer-events-none z-15 px-4">
+          <div className="bg-slate-900/90 backdrop-blur-md text-white text-center px-4 py-2.5 rounded-2xl border border-slate-700 shadow-2xl">
             <p className="text-xs font-medium flex items-center justify-center gap-2">
-              <MessageCircle size={14} className="text-indigo-400" />
-              {subtitle}
+              <MessageCircle size={13} className="text-indigo-400 shrink-0" />
+              <span>{subtitle}</span>
             </p>
           </div>
         </div>
       )}
+
+      {/* Avatar Style Selector Popover */}
+      {avatarSettingsOpen && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-25 bg-black/80 border border-white/10 p-3 rounded-2xl shadow-2xl backdrop-blur-md text-white w-64 pointer-events-auto space-y-2 animate-fade-in">
+          <h5 className="text-[10px] font-bold uppercase tracking-wider text-slate-300 px-1">Choose Privacy Avatar</h5>
+          <div className="flex flex-col gap-1.5">
+            {[
+              { id: 'neon-spirit', name: 'Neon Spirit 🌀' },
+              { id: 'cyberpunk-bot', name: 'Cyberpunk Bot 🤖' },
+              { id: 'anime-minimal', name: 'Anime Minimal 👤' }
+            ].map(style => (
+              <button
+                key={style.id}
+                onClick={() => { setAvatarStyle(style.id); setAvatarSettingsOpen(false); }}
+                className={`w-full py-2 px-3 text-xs font-semibold rounded-xl text-left transition flex items-center justify-between ${
+                  avatarStyle === style.id
+                    ? 'bg-indigo-600 text-white'
+                    : 'hover:bg-white/10 text-slate-200'
+                }`}
+              >
+                <span>{style.name}</span>
+                {avatarStyle === style.id && <span className="text-[8px] bg-white/20 px-1.5 py-0.5 rounded-md font-bold uppercase">Active</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Bottom Floating Action Dock ─────────────────────────────────── */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex flex-col items-center gap-3 w-full max-w-4xl px-4">
+        <div className="bg-black/40 backdrop-blur-md rounded-full px-5 py-2.5 border border-white/10 flex items-center gap-2 md:gap-3 pointer-events-auto shadow-2xl text-white">
+          
+          {/* Reaction Emojis */}
+          <EmojiReactions variant="transparent" />
+
+          {/* Divider */}
+          <div className="w-px h-5 bg-white/15 shrink-0" />
+
+          {/* AI Icebreaker button */}
+          <button
+            onClick={generateIcebreaker}
+            className="p-2 rounded-full bg-indigo-600/80 hover:bg-indigo-600 text-white transition flex items-center justify-center shrink-0 hover:scale-105"
+            title="AI Icebreaker"
+          >
+            <Sparkles size={14} className="animate-pulse" />
+          </button>
+
+          {/* Ask AI Wingman button */}
+          <button
+            onClick={() => onAskWingmanRef.current?.()}
+            className="p-2 rounded-full bg-indigo-600/80 hover:bg-indigo-600 text-white transition flex items-center justify-center shrink-0 hover:scale-105"
+            title="Ask AI Wingman"
+          >
+            <Lightbulb size={14} className="text-amber-300 animate-pulse" />
+          </button>
+
+          {/* Divider */}
+          <div className="w-px h-5 bg-white/15 shrink-0" />
+
+          {/* Mic mute toggle */}
+          <button
+            onClick={toggleMic}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              micMuted
+                ? 'bg-red-500 border border-red-400 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title={micMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+          >
+            {micMuted ? <MicOff size={14} /> : <Mic size={14} />}
+          </button>
+
+          {/* Camera mute toggle */}
+          <button
+            onClick={toggleCam}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              camMuted
+                ? 'bg-red-500 border border-red-400 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title={camMuted ? 'Turn Camera On' : 'Turn Camera Off'}
+          >
+            {camMuted ? <VideoOff size={14} /> : <Video size={14} />}
+          </button>
+
+          {/* Avatar Selector Toggle */}
+          <button
+            onClick={() => setAvatarSettingsOpen(v => !v)}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              avatarSettingsOpen
+                ? 'bg-indigo-600 border border-indigo-500 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title="Privacy Avatar Style"
+          >
+            <Gamepad size={14} />
+          </button>
+
+          {/* Screen Share */}
+          <button
+            onClick={toggleScreenShare}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              screenSharing
+                ? 'bg-indigo-600 border border-indigo-500 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title={screenSharing ? 'Stop Sharing' : 'Share Screen'}
+          >
+            <Monitor size={14} />
+          </button>
+
+          {/* Quick Notes */}
+          <button
+            onClick={() => setNotesOpen((v) => !v)}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              notesOpen
+                ? 'bg-emerald-600 border border-emerald-500 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title="Quick Notes"
+          >
+            <FileText size={14} />
+          </button>
+
+          {/* Chat Panel Toggle */}
+          <button
+            onClick={() => setChatOpen((v) => !v)}
+            className={`p-2 rounded-full transition hover:scale-105 shrink-0 ${
+              chatOpen
+                ? 'bg-indigo-600 border border-indigo-500 text-white'
+                : 'bg-white/10 hover:bg-white/20 text-white'
+            }`}
+            title="In-App Chat"
+          >
+            <MessageCircle size={14} />
+          </button>
+
+          {/* Report Button */}
+          <button
+            onClick={() => setReportOpen(true)}
+            className="p-2 rounded-full bg-white/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition hover:scale-105 shrink-0"
+            title="Report User"
+          >
+            <Flag size={14} />
+          </button>
+
+          {/* Conditional Divider for matches/private actions */}
+          {(otherUid || !isPrivateRoom) && <div className="w-px h-5 bg-white/15 shrink-0" />}
+
+          {/* Add Friend Button */}
+          {otherUid && (
+            <button
+              onClick={handleAddFriend}
+              disabled={friendStatus !== 'none' || sendingRequest}
+              className={`p-2 rounded-full transition hover:scale-105 flex items-center gap-1 shrink-0 ${
+                friendStatus === 'friends'
+                  ? 'bg-emerald-600 text-white'
+                  : friendStatus === 'pending'
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+              title={friendStatus === 'friends' ? 'Friends' : friendStatus === 'pending' ? 'Request Sent' : 'Add Friend'}
+            >
+              {friendStatus === 'friends' ? <Check size={14} /> : friendStatus === 'pending' ? <Check size={14} /> : <UserPlus size={14} />}
+              <span className="text-[10px] font-bold hidden md:inline">
+                {friendStatus === 'friends' ? 'Friends' : friendStatus === 'pending' ? 'Sent' : 'Add Friend'}
+              </span>
+            </button>
+          )}
+
+          {/* SKIP / NEXT BUTTON */}
+          {!isPrivateRoom && (
+            <button
+              onClick={handleSkip}
+              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold p-2 rounded-full flex items-center gap-1 transition hover:scale-105 shrink-0 active:scale-95"
+              title="Skip Stranger"
+            >
+              <Zap size={14} />
+              <span className="text-[10px] font-bold hidden md:inline">Skip</span>
+            </button>
+          )}
+
+          {/* Divider before End Call */}
+          <div className="w-px h-5 bg-white/15 shrink-0" />
+
+          {/* End/Leave Call Button */}
+          <button
+            onClick={() => leaveCall(isPrivateRoom ? 'dashboard' : 'feedback')}
+            className="p-2 rounded-full bg-red-600 hover:bg-red-700 text-white transition hover:scale-105 shrink-0"
+            title="Leave Call"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      </div>
 
       {chatOpen && user && (
         <ChatPanel

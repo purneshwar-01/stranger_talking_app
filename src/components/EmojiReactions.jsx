@@ -23,7 +23,7 @@ const EMOJIS = [
 
 let _particleId = 0;
 
-export default function EmojiReactions({ className = '' }) {
+export default function EmojiReactions({ className = '', variant = 'default' }) {
   // Each particle: { id, emoji, x }  — x is a random horizontal drift %
   const [particles, setParticles] = useState([]);
 
@@ -39,17 +39,27 @@ export default function EmojiReactions({ className = '' }) {
     }, 1800);
   }, []);
 
+  const isTransparent = variant === 'transparent';
+
   return (
     <>
       {/* Toolbar */}
-      <div className={`flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-slate-200/80 shadow-xl rounded-2xl p-2 pointer-events-auto ${className}`}>
+      <div className={
+        isTransparent
+          ? `flex items-center gap-1 pointer-events-auto ${className}`
+          : `flex items-center gap-1.5 bg-white/90 backdrop-blur-md border border-slate-200/80 shadow-xl rounded-2xl p-2 pointer-events-auto ${className}`
+      }>
         {EMOJIS.map(({ emoji, label }) => (
           <button
             key={emoji}
             onClick={() => fireEmoji(emoji)}
             title={label}
             aria-label={label}
-            className="text-lg w-9 h-9 flex items-center justify-center rounded-xl hover:bg-slate-100 active:scale-125 transition-all duration-100 select-none"
+            className={
+              isTransparent
+                ? "text-lg w-8 h-8 flex items-center justify-center rounded-xl hover:bg-white/10 active:scale-125 transition-all duration-100 select-none"
+                : "text-lg w-9 h-9 flex items-center justify-center rounded-xl hover:bg-slate-100 active:scale-125 transition-all duration-100 select-none"
+            }
           >
             {emoji}
           </button>

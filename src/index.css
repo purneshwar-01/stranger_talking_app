@@ -158,3 +158,11 @@
     gap: 0.375rem;
   }
 }
+
+/* ─── Zego Video Canvas Sizing ───────────────────────────────────────────── */
+/* Force all video feeds inside the container to cover their grid container, eliminating dead letterboxing space */
+.zego-video-container video {
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+}

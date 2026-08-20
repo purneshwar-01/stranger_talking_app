@@ -3,46 +3,18 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-
-  // Explicit root-relative base path — ensures /assets/* URLs resolve
-  // correctly on Firebase Hosting and any CDN.
-  base: '/',
-
   build: {
-    // Raise warning threshold — Zego SDK is inherently ~5.2 MB (third-party, cannot split)
-    chunkSizeWarningLimit: 5500,
-
     rollupOptions: {
       output: {
-        // Manual chunk splitting: keep vendor libs separate from app code
-        // so users only re-download what actually changed on deploy.
         manualChunks: {
-          // React runtime — rarely changes
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // Firebase SDK — large but stable
-          'vendor-firebase': [
-            'firebase/app',
-            'firebase/auth',
-            'firebase/firestore',
-          ],
-          // Zego video SDK — large, isolated
-          'vendor-zego': ['@zegocloud/zego-uikit-prebuilt'],
-          // Icon library
-          'vendor-lucide': ['lucide-react'],
+          // Firebase and the Zego video SDK are the two heaviest dependencies —
+          // splitting them into their own chunks means the browser can cache
+          // them separately from your app code, and the initial page load
+          // doesn't have to download the video SDK before showing the login screen.
+          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+          zego: ['@zegocloud/zego-uikit-prebuilt'],
         },
       },
     },
-
-    // Minify with esbuild (default, fastest)
-    minify: 'esbuild',
-
-    // Source maps only in development; keep prod bundle clean
-    sourcemap: false,
   },
-
-  // Dev server settings
-  server: {
-    port: 5173,
-    strictPort: true,
-  },
-});
+})
